@@ -68,11 +68,15 @@ class LLMFactory:
 
     @staticmethod
     def _resolve_profile_mapping() -> LLMModelMapping:
-        """Resolve model mapping from config's model_profile + model_provider settings."""
+        """Resolve model mapping from config's model_profile + model_provider settings.
+        
+        Applies environment variable overrides (DECEPTICON_MODEL_<ROLE>) on top of
+        the base profile, then applies provider remapping.
+        """
         from decepticon.core.config import load_config
 
         config = load_config()
-        return LLMModelMapping.from_profile(config.model_profile).with_provider(
+        return LLMModelMapping.from_env_overrides(config.model_profile).with_provider(
             config.model_provider
         )
 

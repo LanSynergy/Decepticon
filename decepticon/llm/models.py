@@ -49,9 +49,14 @@ Fallbacks activate via ModelFallbackMiddleware on API failure (outage, rate limi
 
 from __future__ import annotations
 
+import os
 from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator
+
+from decepticon.core.logging import get_logger
+
+log = get_logger("llm.models")
 
 
 class ModelProfile(StrEnum):
@@ -65,15 +70,21 @@ class ModelProfile(StrEnum):
 class ModelProvider(StrEnum):
     """Authentication provider for LLM requests.
 
-    api  — API keys via x-api-key header (default)
-    auth — Claude Code OAuth subscription via Bearer token, no API cost
+    api        — API keys via x-api-key header (default)
+    auth       — Claude Code OAuth subscription via Bearer token, no API cost
+    openrouter — OpenRouter unified gateway (single API key for 200+ models)
+    hybrid     — Mixed strategy (direct Anthropic + OpenRouter for others)
     """
 
     API = "api"
     AUTH = "auth"
+    OPENROUTER = "openrouter"
+    HYBRID = "hybrid"
 
 
 # ── Model constants ──────────────────────────────────────────────────────
+
+# Direct provider models (API keys)
 OPUS = "anthropic/claude-opus-4-6"
 SONNET = "anthropic/claude-sonnet-4-6"
 HAIKU = "anthropic/claude-haiku-4-5"
@@ -83,6 +94,35 @@ GEMINI_FLASH = "gemini/gemini-2.5-flash"
 MINIMAX = "minimax/MiniMax-M2.7"
 MINIMAX_HIGHSPEED = "minimax/MiniMax-M2.7-highspeed"
 OLLAMA_LOCAL = "ollama/llama3.2"
+
+# OpenRouter models (unified gateway)
+# Anthropic via OpenRouter
+OPENROUTER_OPUS = "openrouter/anthropic/claude-opus-4-6"
+OPENROUTER_SONNET = "openrouter/anthropic/claude-sonnet-4-6"
+OPENROUTER_HAIKU = "openrouter/anthropic/claude-haiku-4-5"
+
+# OpenAI via OpenRouter
+OPENROUTER_GPT_5 = "openrouter/openai/gpt-5.4"
+OPENROUTER_GPT_4 = "openrouter/openai/gpt-4.1"
+OPENROUTER_GPT_4O = "openrouter/openai/gpt-4o"
+
+# Google via OpenRouter
+OPENROUTER_GEMINI_PRO = "openrouter/google/gemini-pro-1.5"
+OPENROUTER_GEMINI_FLASH = "openrouter/google/gemini-flash-1.5"
+
+# Meta Llama via OpenRouter
+OPENROUTER_LLAMA_405B = "openrouter/meta-llama/llama-3.1-405b-instruct"
+OPENROUTER_LLAMA_70B = "openrouter/meta-llama/llama-3.1-70b-instruct"
+OPENROUTER_LLAMA_8B = "openrouter/meta-llama/llama-3.1-8b-instruct"
+
+# Mistral via OpenRouter
+OPENROUTER_MISTRAL_LARGE = "openrouter/mistralai/mistral-large"
+OPENROUTER_MISTRAL_MEDIUM = "openrouter/mistralai/mistral-medium"
+OPENROUTER_MIXTRAL_8X7B = "openrouter/mistralai/mixtral-8x7b-instruct"
+
+# Cohere via OpenRouter
+OPENROUTER_COMMAND_R_PLUS = "openrouter/cohere/command-r-plus"
+OPENROUTER_COMMAND_R = "openrouter/cohere/command-r"
 
 
 class ProxyConfig(BaseModel):
@@ -356,22 +396,142 @@ class LLMModelMapping(BaseModel):
 
         raise ValueError(f"Unknown profile: {profile}")  # type: ignore[unreachable]
 
+    @classmethod
+    def from_env_overrides(cls, base_profile: ModelProfile | str = ModelProfile.ECO) -> LLMModelMapping:
+        """Create a model mapping from a base profile with environment variable overrides.
+
+        Environment variables allow per-agent-role model customization:
+        
+        Primary model overrides:
+          DECEPTICON_MODEL_DECEPTICON=openrouter/anthropic/claude-opus-4-6
+          DECEPTICON_MODEL_RECON=openrouter/meta-llama/llama-3.1-70b-instruct
+          DECEPTICON_MODEL_EXPLOIT=openrouter/anthropic/claude-sonnet-4-6
+        
+        Fallback model overrides (optional):
+          DECEPTICON_MODEL_DECEPTICON_FALLBACK=openrouter/openai/gpt-5.4
+          DECEPTICON_MODEL_RECON_FALLBACK=openrouter/google/gemini-flash-1.5
+        
+        Supported agent roles:
+          decepticon, soundwave, recon, exploit, postexploit
+          analyst, reverser, contract_auditor, cloud_hunter, ad_operator
+          vulnresearch, scanner, detector, verifier, patcher, exploiter, defender
+        
+        Args:
+            base_profile: Base profile to start from (eco/max/test)
+        
+        Returns:
+            LLMModelMapping with environment variable overrides applied
+        
+        Example:
+            # Start with eco profile, override recon to use Llama 70B
+            DECEPTICON_MODEL_RECON=openrouter/meta-llama/llama-3.1-70b-instruct
+            mapping = LLMModelMapping.from_env_overrides("eco")
+        """
+        # Start with base profile
+        mapping = cls.from_profile(base_profile)
+        
+        # Get all agent role fields
+        role_fields = cls.model_fields.keys()
+        
+        # Check for environment variable overrides
+        overrides = {}
+        for role in role_fields:
+            env_var_primary = f"DECEPTICON_MODEL_{role.upper()}"
+            env_var_fallback = f"DECEPTICON_MODEL_{role.upper()}_FALLBACK"
+            
+            primary_override = os.getenv(env_var_primary)
+            fallback_override = os.getenv(env_var_fallback)
+            
+            # If either override exists, create new assignment
+            if primary_override or fallback_override:
+                current_assignment = getattr(mapping, role)
+                
+                # Use override if provided, otherwise keep current value
+                new_primary = primary_override if primary_override else current_assignment.primary
+                new_fallback = fallback_override if fallback_override else current_assignment.fallback
+                
+                # Validate model names exist in catalog (optional, log warning if not found)
+                if primary_override:
+                    log.info(
+                        "Environment override for role '%s': primary model '%s' → '%s'",
+                        role,
+                        current_assignment.primary,
+                        new_primary,
+                    )
+                
+                if fallback_override:
+                    log.info(
+                        "Environment override for role '%s': fallback model '%s' → '%s'",
+                        role,
+                        current_assignment.fallback or "(none)",
+                        new_fallback,
+                    )
+                
+                overrides[role] = ModelAssignment(
+                    primary=new_primary,
+                    fallback=new_fallback,
+                    temperature=current_assignment.temperature,
+                    max_tokens=current_assignment.max_tokens,
+                )
+        
+        # Apply overrides if any exist
+        if overrides:
+            mapping = mapping.model_copy(update=overrides)
+        
+        return mapping
+
     def with_provider(self, provider: ModelProvider | str) -> "LLMModelMapping":
         """Return a new mapping with primary models remapped for the given provider.
 
-        ModelProvider.AUTH  — remap ``anthropic/*`` primaries to ``auth/*``
-                              so they route through the Claude Code OAuth handler.
-                              Fallbacks are kept on the API provider as a paid
-                              safety net when the subscription hits limits.
-        ModelProvider.API   — no-op, returns self unchanged.
+        Provider remapping strategies:
 
-        Only ``anthropic/`` primaries are remapped; GPT/Gemini/etc. are left as-is.
+        ModelProvider.API
+            No-op, returns self unchanged. Models use their original provider
+            prefixes (anthropic/, openai/, gemini/, etc.) and route through
+            LiteLLM proxy with direct API keys.
+
+        ModelProvider.AUTH
+            Remap ``anthropic/*`` primaries to ``auth/*`` so they route through
+            the Claude Code OAuth handler. Fallbacks stay on API provider as a
+            paid safety net when subscription hits limits. Non-Anthropic models
+            (GPT, Gemini, etc.) are left unchanged.
+
+        ModelProvider.OPENROUTER
+            Remap ALL primaries to ``openrouter/<provider>/<model>`` format.
+            Routes all requests through OpenRouter unified gateway using single
+            OPENROUTER_API_KEY. Fallbacks also remapped to OpenRouter.
+            
+            Examples:
+              anthropic/claude-opus-4-6 → openrouter/anthropic/claude-opus-4-6
+              openai/gpt-5.4 → openrouter/openai/gpt-5.4
+              gemini/gemini-2.5-flash → openrouter/google/gemini-flash-1.5
+
+        ModelProvider.HYBRID
+            Mixed strategy for cost optimization:
+            - Keep Anthropic models on direct API (better rate limits)
+            - Route non-Anthropic models through OpenRouter (cost savings)
+            - Fallbacks use OpenRouter when primary is direct, vice versa
+            
+            This gives you:
+            - Best rate limits on Anthropic (direct API)
+            - Access to open-source models (Llama, Mistral via OpenRouter)
+            - Cost optimization (use cheaper models where appropriate)
+
+        Model name remapping rules:
+        - anthropic/claude-* → openrouter/anthropic/claude-*
+        - openai/gpt-* → openrouter/openai/gpt-*
+        - gemini/gemini-* → openrouter/google/gemini-* (provider name differs)
+        - Other providers passed through as-is with openrouter/ prefix
+
+        Only primary models are remapped; fallbacks are preserved as safety nets
+        unless provider is OPENROUTER (then fallbacks also remapped).
         """
         provider = ModelProvider(provider)
         if provider == ModelProvider.API:
             return self
 
-        def _remap(assignment: ModelAssignment) -> ModelAssignment:
+        def _remap_to_auth(assignment: ModelAssignment) -> ModelAssignment:
+            """Remap Anthropic models to auth/* for OAuth subscription."""
             primary = assignment.primary
             if primary.startswith("anthropic/"):
                 model_id = primary.split("/", 1)[1]
@@ -383,6 +543,82 @@ class LLMModelMapping(BaseModel):
                 max_tokens=assignment.max_tokens,
             )
 
+        def _remap_to_openrouter(model_name: str) -> str:
+            """Remap model name to OpenRouter format.
+            
+            Handles provider name differences (e.g., gemini → google).
+            """
+            if model_name.startswith("openrouter/"):
+                return model_name  # Already in OpenRouter format
+            
+            if model_name.startswith("anthropic/"):
+                # anthropic/claude-opus-4-6 → openrouter/anthropic/claude-opus-4-6
+                model_id = model_name.split("/", 1)[1]
+                return f"openrouter/anthropic/{model_id}"
+            
+            if model_name.startswith("openai/"):
+                # openai/gpt-5.4 → openrouter/openai/gpt-5.4
+                model_id = model_name.split("/", 1)[1]
+                return f"openrouter/openai/{model_id}"
+            
+            if model_name.startswith("gemini/"):
+                # gemini/gemini-2.5-flash → openrouter/google/gemini-flash-1.5
+                # Note: OpenRouter uses "google" as provider, not "gemini"
+                model_id = model_name.split("/", 1)[1]
+                # Map to OpenRouter's Google model names
+                if "flash" in model_id:
+                    return "openrouter/google/gemini-flash-1.5"
+                elif "pro" in model_id:
+                    return "openrouter/google/gemini-pro-1.5"
+                else:
+                    # Fallback: use model_id as-is
+                    return f"openrouter/google/{model_id}"
+            
+            # For other providers (minimax, ollama, etc.), pass through with openrouter/ prefix
+            # This may not work for all providers, but provides a reasonable default
+            return f"openrouter/{model_name}"
+
+        def _remap_openrouter_full(assignment: ModelAssignment) -> ModelAssignment:
+            """Remap both primary and fallback to OpenRouter."""
+            primary = _remap_to_openrouter(assignment.primary)
+            fallback = _remap_to_openrouter(assignment.fallback) if assignment.fallback else None
+            return ModelAssignment(
+                primary=primary,
+                fallback=fallback,
+                temperature=assignment.temperature,
+                max_tokens=assignment.max_tokens,
+            )
+
+        def _remap_hybrid(assignment: ModelAssignment) -> ModelAssignment:
+            """Hybrid strategy: direct Anthropic, OpenRouter for others."""
+            primary = assignment.primary
+            fallback = assignment.fallback
+            
+            # Keep Anthropic on direct API for better rate limits
+            if not primary.startswith("anthropic/"):
+                primary = _remap_to_openrouter(primary)
+            
+            # Route fallbacks through OpenRouter for cost savings
+            if fallback and not fallback.startswith("anthropic/"):
+                fallback = _remap_to_openrouter(fallback)
+            
+            return ModelAssignment(
+                primary=primary,
+                fallback=fallback,
+                temperature=assignment.temperature,
+                max_tokens=assignment.max_tokens,
+            )
+
+        # Select remapping function based on provider
+        if provider == ModelProvider.AUTH:
+            remap_fn = _remap_to_auth
+        elif provider == ModelProvider.OPENROUTER:
+            remap_fn = _remap_openrouter_full
+        elif provider == ModelProvider.HYBRID:
+            remap_fn = _remap_hybrid
+        else:
+            raise ValueError(f"Unknown provider: {provider}")
+
         return self.model_copy(
-            update={field: _remap(getattr(self, field)) for field in self.__class__.model_fields}
+            update={field: remap_fn(getattr(self, field)) for field in self.__class__.model_fields}
         )

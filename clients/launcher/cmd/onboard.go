@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"charm.land/huh/v2"
 	"github.com/PurpleAILAB/Decepticon/clients/launcher/internal/config"
@@ -13,7 +14,7 @@ var resetFlag bool
 
 var onboardCmd = &cobra.Command{
 	Use:   "onboard",
-	Short: "Configure Decepticon (authentication, provider, model profile)",
+	Short: "Configure Decepticon (authentication, provider strategy, model profile)",
 	RunE:  runOnboard,
 }
 
@@ -30,12 +31,14 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 	}
 
 	var (
-		authMethod   string
-		llmProvider  string
-		apiKey       string
-		profile      string
-		useLangSmith bool
-		langSmithKey string
+		authMethod       string
+		providerStrategy string
+		llmProvider      string
+		apiKey           string
+		openrouterKey    string
+		profile          string
+		useLangSmith     bool
+		langSmithKey     string
 	)
 
 	form := huh.NewForm(
@@ -43,7 +46,7 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 		huh.NewGroup(
 			huh.NewNote().
 				Title("Decepticon Setup").
-				Description("Configure authentication, LLM provider,\nmodel profile, and observability.\n\nUse ↑↓ to navigate, Enter to confirm."),
+				Description("Configure authentication, provider strategy,\nmodel profile, and observability.\n\nUse ↑↓ to navigate, Enter to confirm."),
 		),
 
 		// Step 1: Authentication method
@@ -56,10 +59,37 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 					huh.NewOption("OAuth  — Subscription-based (Claude Code, Codex)", "auth"),
 				).
 				Value(&authMethod),
-		).Title("1 / 5  ·  Authentication").
+		).Title("1 / 6  ·  Authentication").
 			Description("Choose how to connect to LLM services"),
 
-		// Step 2: Provider selection
+		// Step 2: Provider Strategy (NEW - only for API key mode)
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Provider Strategy").
+				Description("How should Decepticon route model requests?").
+				Options(
+					huh.NewOption("Direct APIs     — Individual provider keys (standard)", "direct"),
+					huh.NewOption("OpenRouter      — Single key for 200+ models (cost-optimized)", "openrouter"),
+					huh.NewOption("Hybrid          — Mix direct + OpenRouter (best of both)", "hybrid"),
+				).
+				Value(&providerStrategy),
+			huh.NewNote().
+				Title("Strategy Details:").
+				Description(
+					"• Direct APIs: Use ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.\n"+
+						"  Best rate limits, standard approach.\n\n"+
+						"• OpenRouter: Single OPENROUTER_API_KEY for all models.\n"+
+						"  Access 200+ models, 10-30% cheaper, unified billing.\n\n"+
+						"• Hybrid: Direct Anthropic + OpenRouter for others.\n"+
+						"  Optimal cost/performance balance.",
+				),
+		).Title("2 / 6  ·  Provider Strategy").
+			Description("Choose your model routing approach").
+			WithHideFunc(func() bool {
+				return authMethod == "auth"
+			}),
+
+		// Step 3: Provider selection (only for direct/hybrid strategies)
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("LLM Provider").
@@ -79,10 +109,13 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 					}
 				}, &authMethod).
 				Value(&llmProvider),
-		).Title("2 / 5  ·  Provider").
-			Description("Select your primary LLM provider"),
+		).Title("3 / 6  ·  Provider").
+			Description("Select your primary LLM provider").
+			WithHideFunc(func() bool {
+				return authMethod == "auth" || providerStrategy == "openrouter"
+			}),
 
-		// Step 3: API key input (only for api mode)
+		// Step 4a: Direct provider API key (for direct/hybrid strategies)
 		huh.NewGroup(
 			huh.NewInput().
 				TitleFunc(func() string {
@@ -111,6 +144,12 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 					}
 					return ""
 				}, &llmProvider).
+				DescriptionFunc(func() string {
+					if providerStrategy == "hybrid" {
+						return "Direct API key for " + llmProvider + " (best rate limits)"
+					}
+					return "Enter your " + llmProvider + " API key"
+				}, &providerStrategy).
 				EchoMode(huh.EchoModePassword).
 				Value(&apiKey).
 				Validate(func(s string) error {
@@ -119,13 +158,49 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 					}
 					return nil
 				}),
-		).Title("3 / 5  ·  Credentials").
+		).Title("4 / 6  ·  Credentials").
 			Description("Enter your provider API key").
 			WithHideFunc(func() bool {
-				return authMethod == "auth"
+				return authMethod == "auth" || providerStrategy == "openrouter"
 			}),
 
-		// Step 4: Model profile
+		// Step 4b: OpenRouter API key (for openrouter/hybrid strategies)
+		huh.NewGroup(
+			huh.NewInput().
+				Title("OpenRouter API Key").
+				Placeholder("sk-or-v1-...").
+				DescriptionFunc(func() string {
+					if providerStrategy == "hybrid" {
+						return "OpenRouter key for non-Anthropic models (GPT, Gemini, Llama, etc.)"
+					}
+					return "Get your key at: https://openrouter.ai/keys"
+				}, &providerStrategy).
+				EchoMode(huh.EchoModePassword).
+				Value(&openrouterKey).
+				Validate(func(s string) error {
+					if s == "" {
+						return fmt.Errorf("OpenRouter API key is required")
+					}
+					if !strings.HasPrefix(s, "sk-or-") {
+						return fmt.Errorf("OpenRouter keys start with 'sk-or-'")
+					}
+					return nil
+				}),
+			huh.NewNote().
+				Title("OpenRouter Benefits:").
+				Description(
+					"• Access 200+ models from one API key\n"+
+						"• Anthropic, OpenAI, Google, Meta, Mistral, Cohere, etc.\n"+
+						"• 10-30% cheaper than direct APIs\n"+
+						"• Unified billing across all providers",
+				),
+		).Title("4 / 6  ·  Credentials").
+			Description("Enter your OpenRouter API key").
+			WithHideFunc(func() bool {
+				return authMethod == "auth" || (providerStrategy != "openrouter" && providerStrategy != "hybrid")
+			}),
+
+		// Step 5: Model profile
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("Model Profile").
@@ -136,10 +211,10 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 					huh.NewOption("test — Haiku only (for development)", "test"),
 				).
 				Value(&profile),
-		).Title("4 / 5  ·  Performance").
+		).Title("5 / 6  ·  Performance").
 			Description("Balance between cost and capability"),
 
-		// Step 5: LangSmith tracing
+		// Step 6: LangSmith tracing
 		huh.NewGroup(
 			huh.NewConfirm().
 				Title("Enable LangSmith?").
@@ -147,7 +222,7 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 				Affirmative("Yes").
 				Negative("No").
 				Value(&useLangSmith),
-		).Title("5 / 5  ·  Observability").
+		).Title("6 / 6  ·  Observability").
 			Description("Optional tracing integration"),
 
 		// LangSmith API key (only when enabled)
@@ -163,7 +238,7 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 					}
 					return nil
 				}),
-		).Title("5 / 5  ·  Observability").
+		).Title("6 / 6  ·  Observability").
 			Description("Enter your LangSmith credentials").
 			WithHideFunc(func() bool {
 				return !useLangSmith
@@ -176,11 +251,29 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 
 	// Build values map
 	values := map[string]string{
-		"DECEPTICON_MODEL_PROFILE":  profile,
-		"DECEPTICON_MODEL_PROVIDER": authMethod,
+		"DECEPTICON_MODEL_PROFILE": profile,
 	}
 
-	if authMethod == "api" && apiKey != "" {
+	// Set DECEPTICON_MODEL_PROVIDER based on auth method and provider strategy
+	if authMethod == "auth" {
+		values["DECEPTICON_MODEL_PROVIDER"] = authMethod
+	} else {
+		// For API key mode, map provider strategy to the expected value
+		switch providerStrategy {
+		case "direct":
+			values["DECEPTICON_MODEL_PROVIDER"] = "api"
+		case "openrouter":
+			values["DECEPTICON_MODEL_PROVIDER"] = "openrouter"
+		case "hybrid":
+			values["DECEPTICON_MODEL_PROVIDER"] = "hybrid"
+		default:
+			// Backward compatibility: default to "api" if strategy not set
+			values["DECEPTICON_MODEL_PROVIDER"] = "api"
+		}
+	}
+
+	// Add direct provider API keys (for direct and hybrid strategies)
+	if authMethod == "api" && apiKey != "" && (providerStrategy == "direct" || providerStrategy == "hybrid") {
 		switch llmProvider {
 		case "anthropic":
 			values["ANTHROPIC_API_KEY"] = apiKey
@@ -193,6 +286,12 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Add OpenRouter API key (for openrouter and hybrid strategies)
+	if authMethod == "api" && openrouterKey != "" && (providerStrategy == "openrouter" || providerStrategy == "hybrid") {
+		values["OPENROUTER_API_KEY"] = openrouterKey
+	}
+
+	// Add LangSmith configuration
 	if useLangSmith && langSmithKey != "" {
 		values["LANGSMITH_TRACING"] = "true"
 		values["LANGSMITH_API_KEY"] = langSmithKey
@@ -207,17 +306,42 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	fmt.Println(ui.Green.Render("  ✓ Configuration saved"))
 	fmt.Println()
-	fmt.Println(ui.Dim.Render("  ┌──────────────────────────────────┐"))
+	fmt.Println(ui.Dim.Render("  ┌──────────────────────────────────────┐"))
 	fmt.Println(ui.Dim.Render("  │") + ui.Cyan.Render("  Auth      ") + ui.Dim.Render(authMethod))
-	fmt.Println(ui.Dim.Render("  │") + ui.Cyan.Render("  Provider  ") + ui.Dim.Render(llmProvider))
+
+	// Show provider strategy for API key mode
+	if authMethod == "api" {
+		strategyDisplay := providerStrategy
+		if providerStrategy == "direct" {
+			strategyDisplay = "direct (" + llmProvider + ")"
+		}
+		fmt.Println(ui.Dim.Render("  │") + ui.Cyan.Render("  Strategy  ") + ui.Dim.Render(strategyDisplay))
+	} else {
+		fmt.Println(ui.Dim.Render("  │") + ui.Cyan.Render("  Provider  ") + ui.Dim.Render(llmProvider))
+	}
+
 	fmt.Println(ui.Dim.Render("  │") + ui.Cyan.Render("  Profile   ") + ui.Dim.Render(profile))
+
 	if useLangSmith {
 		fmt.Println(ui.Dim.Render("  │") + ui.Cyan.Render("  LangSmith ") + ui.Green.Render("enabled"))
 	}
+
 	fmt.Println(ui.Dim.Render("  │"))
 	fmt.Println(ui.Dim.Render("  │  ") + ui.Dim.Render(config.EnvPath()))
-	fmt.Println(ui.Dim.Render("  └──────────────────────────────────┘"))
+	fmt.Println(ui.Dim.Render("  └──────────────────────────────────────┘"))
 	fmt.Println()
+
+	// Show helpful next steps based on provider strategy
+	if authMethod == "api" && providerStrategy == "openrouter" {
+		ui.DimText("  OpenRouter provides access to 200+ models")
+		ui.DimText("  View available models: https://openrouter.ai/models")
+		fmt.Println()
+	} else if authMethod == "api" && providerStrategy == "hybrid" {
+		ui.DimText("  Hybrid mode: Direct " + llmProvider + " + OpenRouter for others")
+		ui.DimText("  Optimal cost/performance balance")
+		fmt.Println()
+	}
+
 	ui.DimText("  Run 'decepticon' to start the platform")
 	return nil
 }

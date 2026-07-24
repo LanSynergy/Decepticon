@@ -85,6 +85,137 @@ model_list:
       model: ollama/llama3.2
       api_base: os.environ/OLLAMA_API_BASE
 
+  # ── OpenRouter (Unified Gateway) ────────────────────────────────────
+  # OpenRouter provides access to 200+ models through a single API key.
+  # Model names use format: openrouter/<provider>/<model>
+  # Docs: https://openrouter.ai/docs
+
+  # Anthropic via OpenRouter
+  - model_name: openrouter/anthropic/claude-opus-4-6
+    litellm_params:
+      model: anthropic/claude-opus-4-6
+      api_base: https://openrouter.ai/api/v1
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  - model_name: openrouter/anthropic/claude-sonnet-4-6
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_base: https://openrouter.ai/api/v1
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  - model_name: openrouter/anthropic/claude-haiku-4-5
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_base: https://openrouter.ai/api/v1
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  # OpenAI via OpenRouter
+  - model_name: openrouter/openai/gpt-5.4
+    litellm_params:
+      model: openai/gpt-5.4
+      api_base: https://openrouter.ai/api/v1
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  - model_name: openrouter/openai/gpt-4.1
+    litellm_params:
+      model: openai/gpt-4.1
+      api_base: https://openrouter.ai/api/v1
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  - model_name: openrouter/openai/gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_base: https://openrouter.ai/api/v1
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  # Google via OpenRouter
+  - model_name: openrouter/google/gemini-pro-1.5
+    litellm_params:
+      model: google/gemini-pro-1.5
+      api_base: https://openrouter.ai/api/v1
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  - model_name: openrouter/google/gemini-flash-1.5
+    litellm_params:
+      model: google/gemini-flash-1.5
+      api_base: https://openrouter.ai/api/v1
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  # Meta Llama via OpenRouter
+  - model_name: openrouter/meta-llama/llama-3.1-405b-instruct
+    litellm_params:
+      model: meta-llama/llama-3.1-405b-instruct
+      api_base: https://openrouter.ai/api/v1
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  - model_name: openrouter/meta-llama/llama-3.1-70b-instruct
+    litellm_params:
+      model: meta-llama/llama-3.1-70b-instruct
+      api_base: https://openrouter.ai/api/v1
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  - model_name: openrouter/meta-llama/llama-3.1-8b-instruct
+    litellm_params:
+      model: meta-llama/llama-3.1-8b-instruct
+      api_base: https://openrouter.ai/api/v1
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  # Mistral via OpenRouter
+  - model_name: openrouter/mistralai/mistral-large
+    litellm_params:
+      model: mistralai/mistral-large
+      api_base: https://openrouter.ai/api/v1
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  - model_name: openrouter/mistralai/mistral-medium
+    litellm_params:
+      model: mistralai/mistral-medium
+      api_base: https://openrouter.ai/api/v1
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  - model_name: openrouter/mistralai/mixtral-8x7b-instruct
+    litellm_params:
+      model: mistralai/mixtral-8x7b-instruct
+      api_base: https://openrouter.ai/api/v1
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  # Cohere via OpenRouter
+  - model_name: openrouter/cohere/command-r-plus
+    litellm_params:
+      model: cohere/command-r-plus
+      api_base: https://openrouter.ai/api/v1
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  - model_name: openrouter/cohere/command-r
+    litellm_params:
+      model: cohere/command-r
+      api_base: https://openrouter.ai/api/v1
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  # ── FREE Models via OpenRouter ──────────────────────────────────
+  # These models are completely free on OpenRouter (no usage limits)
+  
+  # NVIDIA Nemotron (120B params - most capable free model)
+  - model_name: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+    litellm_params:
+      model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+      api_base: https://openrouter.ai/api/v1
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  # MiniMax M2.5 (balanced performance)
+  - model_name: openrouter/minimax/minimax-m2.5:free
+    litellm_params:
+      model: openrouter/minimax/minimax-m2.5:free
+      api_base: https://openrouter.ai/api/v1
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  # GLM-4.5 Air (efficient for lighter tasks)
+  - model_name: openrouter/z-ai/glm-4.5-air:free
+    litellm_params:
+      model: openrouter/z-ai/glm-4.5-air:free
+      api_base: https://openrouter.ai/api/v1
+      api_key: os.environ/OPENROUTER_API_KEY
+
 # --- LiteLLM Settings ---
 litellm_settings:
   custom_provider_map:
